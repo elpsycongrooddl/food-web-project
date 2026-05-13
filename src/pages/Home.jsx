@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import {
   Layout,
   Menu,
@@ -16,7 +16,10 @@ import {
   Badge,
   Checkbox,
   Spin,
+  Upload,
+  Image,
 } from 'antd'
+import { UploadOutlined, XOutlined } from '@ant-design/icons'
 import {
   HomeOutlined,
   UserOutlined,
@@ -50,8 +53,14 @@ function Home({ user }) {
   const [douguoSearch, setDouguoSearch] = useState('')
   const [isPriceModalVisible, setIsPriceModalVisible] = useState(false)
   const [currentRecipe, setCurrentRecipe] = useState(null)
+  const [currentRecipeImage, setCurrentRecipeImage] = useState(null)
   const [priceForm, setPriceForm] = useState({ price: '', priceType: '' })
+  const [addRecipeImage, setAddRecipeImage] = useState(null)
+  const [isConfirmModalVisible, setIsConfirmModalVisible] = useState(false)
+  const [currentOrder, setCurrentOrder] = useState(null)
+  const [orderItemImages, setOrderItemImages] = useState({})
   const navigate = useNavigate()
+  const [form] = Form.useForm()
 
   useEffect(() => {
     fetchRecipes()
@@ -130,6 +139,7 @@ function Home({ user }) {
         price: values.price,
         price_type: values.priceType,
         chef_id: user.id,
+        image_url: addRecipeImage || null,
       },
     ])
 
@@ -138,6 +148,7 @@ function Home({ user }) {
     } else {
       message.success('菜谱添加成功')
       setIsAddModalVisible(false)
+      setAddRecipeImage(null)
       fetchRecipes()
     }
   }
@@ -163,6 +174,7 @@ function Home({ user }) {
         price: parseFloat(priceForm.price),
         price_type: priceForm.priceType,
         chef_id: user.id,
+        image_url: currentRecipeImage || null,
       },
     ])
 
@@ -172,6 +184,7 @@ function Home({ user }) {
       message.success('菜谱已添加到我的菜谱列表')
       setIsPriceModalVisible(false)
       setCurrentRecipe(null)
+      setCurrentRecipeImage(null)
       fetchRecipes()
     }
   }
@@ -211,16 +224,43 @@ function Home({ user }) {
     }
   }
 
-  const handleConfirmOrder = async (orderId) => {
+  const handleConfirmOrder = (orderId) => {
+    const order = orders.find(o => o.id === orderId)
+    if (order) {
+      setCurrentOrder(order)
+      setOrderItemImages({})
+      setIsConfirmModalVisible(true)
+    }
+  }
+
+  const handleConfirmWithImages = async () => {
+    for (const [itemId, imageUrl] of Object.entries(orderItemImages)) {
+      await supabase
+        .from('order_items')
+        .update({ finished_image: imageUrl })
+        .eq('id', parseInt(itemId))
+
+      const item = currentOrder.order_items.find(i => i.id === parseInt(itemId))
+      if (item && item.recipe_id) {
+        await supabase
+          .from('recipes')
+          .update({ image_url: imageUrl })
+          .eq('id', item.recipe_id)
+      }
+    }
+
     const { error } = await supabase
       .from('orders')
       .update({ status: 'completed' })
-      .eq('id', orderId)
+      .eq('id', currentOrder.id)
 
     if (error) {
       message.error(error.message)
     } else {
-      message.success('订单已确认')
+      message.success('订单已确认，成品图已同步更新到菜谱')
+      setIsConfirmModalVisible(false)
+      setCurrentOrder(null)
+      setOrderItemImages({})
       window.location.reload()
     }
   }
@@ -418,6 +458,13 @@ function Home({ user }) {
                     hoverable
                     className="recipe-card"
                     title={recipe.name}
+                    cover={recipe.image_url ? (
+                      <Image
+                        alt={recipe.name}
+                        src={recipe.image_url}
+                        style={{ height: 200, objectFit: 'cover' }}
+                      />
+                    ) : undefined}
                     extra={
                       <Tag color={recipe.chef_id === user.id ? 'green' : 'blue'}>
                         {recipe.chef_id === user.id ? '我的菜谱' : '其他厨师'}
@@ -481,6 +528,47 @@ function Home({ user }) {
               rules={[{ required: true, message: '请输入菜谱名称' }]}
             >
               <Input placeholder="例如：红烧肉" />
+            </Form.Item>
+            <Form.Item
+              name="image"
+              label="成品图片"
+            >
+              {addRecipeImage && (
+                <Image
+                  alt="已上传图片"
+                  src={addRecipeImage}
+                  style={{ width: '100%', height: 200, objectFit: 'cover', marginBottom: 12 }}
+                />
+              )}
+              <Upload.Dragger
+                name="image"
+                accept="image/*"
+                fileList={[]}
+                beforeUpload={async (file) => {
+                  const extension = file.name.split('.').pop()
+                  const safeFileName = `recipes/${Date.now()}.${extension}`
+                  const { error: uploadError } = await supabase.storage
+                    .from('recipe-images')
+                    .upload(safeFileName, file, {
+                      cacheControl: '3600',
+                      upsert: false
+                    })
+                  
+                  if (!uploadError) {
+                    const { data: { publicUrl } } = supabase.storage
+                      .from('recipe-images')
+                      .getPublicUrl(safeFileName)
+                    setAddRecipeImage(publicUrl)
+                    message.success('图片上传成功')
+                  } else {
+                    message.error('图片上传失败：' + uploadError.message)
+                  }
+                  return false
+                }}
+              >
+                <p className="ant-upload-text">点击或拖拽上传成品图片</p>
+                <p className="ant-upload-hint">支持 JPG、PNG 格式</p>
+              </Upload.Dragger>
             </Form.Item>
             <Form.Item
               name="description"
@@ -549,6 +637,47 @@ function Home({ user }) {
                 initialValues={priceForm}
               >
                 <Form.Item
+                  name="image"
+                  label="成品图片"
+                >
+                  {currentRecipeImage && (
+                    <Image
+                      alt="已上传图片"
+                      src={currentRecipeImage}
+                      style={{ width: '100%', height: 200, objectFit: 'cover', marginBottom: 12 }}
+                    />
+                  )}
+                  <Upload.Dragger
+                    name="image"
+                    accept="image/*"
+                    fileList={[]}
+                    beforeUpload={async (file) => {
+                      const extension = file.name.split('.').pop()
+                      const safeFileName = `recipes/${Date.now()}.${extension}`
+                      const { error: uploadError } = await supabase.storage
+                        .from('recipe-images')
+                        .upload(safeFileName, file, {
+                          cacheControl: '3600',
+                          upsert: false
+                        })
+                      
+                      if (!uploadError) {
+                        const { data: { publicUrl } } = supabase.storage
+                          .from('recipe-images')
+                          .getPublicUrl(safeFileName)
+                        setCurrentRecipeImage(publicUrl)
+                        message.success('图片上传成功')
+                      } else {
+                        message.error('图片上传失败：' + uploadError.message)
+                      }
+                      return false
+                    }}
+                  >
+                    <p className="ant-upload-text">点击或拖拽上传成品图片</p>
+                    <p className="ant-upload-hint">支持 JPG、PNG 格式</p>
+                  </Upload.Dragger>
+                </Form.Item>
+                <Form.Item
                   name="price"
                   label="价格数值"
                   rules={[{ required: true, message: '请输入价格' }]}
@@ -572,17 +701,97 @@ function Home({ user }) {
                   />
                 </Form.Item>
                 <Form.Item>
-                  <Button type="primary" onClick={handleConfirmPrice} block>
-                    确认添加
+                    <Button type="primary" onClick={handleConfirmPrice} block>
+                      确认添加
+                    </Button>
+                  </Form.Item>
+                </Form>
+              </div>
+            )}
+          </Modal>
+
+          <Modal
+            title="确认订单完成"
+            visible={isConfirmModalVisible}
+            onCancel={() => {
+              setIsConfirmModalVisible(false)
+              setCurrentOrder(null)
+              setOrderItemImages({})
+            }}
+            footer={null}
+            width={600}
+          >
+            {currentOrder && currentOrder.order_items && currentOrder.order_items.length > 0 && (
+              <div>
+                <p className="price-modal-title">订单 #{currentOrder.id}</p>
+                <p className="order-items-title">请为以下菜品上传成品图（可选）：</p>
+                <div className="order-items-images">
+                  {currentOrder.order_items.map((item) => (
+                    <div key={item.id} className="order-item-image">
+                      <div className="item-image-header">
+                        <span className="item-image-name">{item.recipes?.name}</span>
+                        <span className="item-image-quantity">x{item.quantity}</span>
+                      </div>
+                      {orderItemImages[item.id] && (
+                        <Image
+                          alt={item.recipes?.name}
+                          src={orderItemImages[item.id]}
+                          style={{ width: '100%', height: 100, objectFit: 'contain', marginBottom: 12 }}
+                        />
+                      )}
+                      <Upload.Dragger
+                        name={`image-${item.id}`}
+                        accept="image/*"
+                        fileList={[]}
+                        beforeUpload={async (file) => {
+                          const extension = file.name.split('.').pop()
+                          const safeFileName = `orders/${Date.now()}.${extension}`
+                          const { error: uploadError } = await supabase.storage
+                            .from('recipe-images')
+                            .upload(safeFileName, file, {
+                              cacheControl: '3600',
+                              upsert: false
+                            })
+                          
+                          if (!uploadError) {
+                            const { data: { publicUrl } } = supabase.storage
+                              .from('recipe-images')
+                              .getPublicUrl(safeFileName)
+                            setOrderItemImages(prev => ({
+                              ...prev,
+                              [item.id]: publicUrl
+                            }))
+                            message.success('图片上传成功')
+                          } else {
+                            message.error('图片上传失败：' + uploadError.message)
+                          }
+                          return false
+                        }}
+                      >
+                        <p className="ant-upload-text">点击或拖拽上传成品图</p>
+                        <p className="ant-upload-hint">支持 JPG、PNG 格式</p>
+                      </Upload.Dragger>
+                    </div>
+                  ))}
+                </div>
+                <div className="confirm-modal-footer">
+                  <Button onClick={() => {
+                    setIsConfirmModalVisible(false)
+                    setCurrentOrder(null)
+                    setOrderItemImages({})
+                  }}>
+                    取消
                   </Button>
-                </Form.Item>
-              </Form>
-            </div>
-          )}
-        </Modal>
-      </Layout>
-    )
-  }
+                  <Button type="primary" onClick={handleConfirmWithImages}>
+                    确认已完成
+                  </Button>
+                </div>
+              </div>
+            )}
+          </Modal>
+        </Layout>
+      )
+    }
 
   return (
     <Layout className="foodie-layout">
@@ -638,6 +847,13 @@ function Home({ user }) {
                     : ''
                 }`}
                 title={recipe.name}
+                cover={recipe.image_url ? (
+                  <Image
+                    alt={recipe.name}
+                    src={recipe.image_url}
+                    style={{ height: 250, objectFit: 'cover' }}
+                  />
+                ) : undefined}
                 extra={
                   <Checkbox
                     checked={selectedRecipes.find((r) => r.id === recipe.id)}

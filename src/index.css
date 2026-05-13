@@ -164,6 +164,23 @@ body {
   border: none;
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);
   transition: all 0.3s ease;
+  overflow: hidden;
+}
+
+.recipe-card .ant-card-cover {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px 16px 0 0;
+  background: #fafafa;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.recipe-card .ant-card-cover img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 
 .recipe-card:hover {
@@ -510,6 +527,50 @@ body {
   color: var(--text-primary);
 }
 
+.order-items-title {
+  font-size: 14px;
+  color: var(--text-secondary);
+  margin-bottom: 16px;
+}
+
+.order-items-images {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+}
+
+.order-item-image {
+  padding: 16px;
+  background: #fafafa;
+  border-radius: 12px;
+}
+
+.item-image-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+}
+
+.item-image-name {
+  font-weight: bold;
+  color: var(--text-primary);
+}
+
+.item-image-quantity {
+  color: var(--primary-color);
+  font-weight: bold;
+}
+
+.confirm-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid #f0f0f0;
+}
+
 .recipe-card .recipe-steps {
   margin-top: 12px;
   padding-top: 12px;
@@ -543,6 +604,24 @@ body {
 .foodie-card {
   border-radius: 16px;
   overflow: hidden;
+  height: 100%;
+}
+
+.foodie-card .ant-card-cover {
+  position: relative;
+  overflow: hidden;
+  border-radius: 16px 16px 0 0;
+  background: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  aspect-ratio: 16 / 10;
+}
+
+.foodie-card .ant-card-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
 }
 
 .foodie-card:hover {

@@ -12,6 +12,8 @@ import {
   Tag,
   Divider,
   Empty,
+  Upload,
+  Image,
 } from 'antd'
 import {
   UserOutlined,
@@ -34,7 +36,9 @@ function Profile({ user }) {
   const [orders, setOrders] = useState([])
   const [isEditModalVisible, setIsEditModalVisible] = useState(false)
   const [editingRecipe, setEditingRecipe] = useState(null)
+  const [editRecipeImage, setEditRecipeImage] = useState(null)
   const navigate = useNavigate()
+  const [form] = Form.useForm()
 
   useEffect(() => {
     if (user.user_type === 'chef') {
@@ -79,6 +83,7 @@ function Profile({ user }) {
       .update({
         name: values.name,
         description: values.description,
+        image_url: editRecipeImage || editingRecipe.image_url,
         ingredients: values.ingredients,
         steps: values.steps,
         price: values.price,
@@ -91,6 +96,7 @@ function Profile({ user }) {
     } else {
       message.success('菜谱更新成功')
       setIsEditModalVisible(false)
+      setEditRecipeImage(null)
       fetchChefRecipes()
     }
   }
@@ -205,6 +211,13 @@ function Profile({ user }) {
                       hoverable
                       className="recipe-card"
                       title={recipe.name}
+                      cover={recipe.image_url ? (
+                        <Image
+                          alt={recipe.name}
+                          src={recipe.image_url}
+                          style={{ height: 200, objectFit: 'cover' }}
+                        />
+                      ) : undefined}
                       extra={
                         <div className="card-actions">
                           <Button
@@ -322,6 +335,7 @@ function Profile({ user }) {
               initialValues={{
                 name: editingRecipe.name,
                 description: editingRecipe.description,
+                image: editingRecipe.image_url,
                 ingredients: editingRecipe.ingredients,
                 steps: editingRecipe.steps,
                 price: editingRecipe.price,
@@ -335,6 +349,47 @@ function Profile({ user }) {
                 rules={[{ required: true, message: '请输入菜谱名称' }]}
               >
                 <Input />
+              </Form.Item>
+              <Form.Item
+                name="image"
+                label="成品图片"
+              >
+                {editRecipeImage || editingRecipe.image_url ? (
+                  <Image
+                    alt={editingRecipe.name}
+                    src={editRecipeImage || editingRecipe.image_url}
+                    style={{ width: '100%', height: 200, objectFit: 'cover', marginBottom: 12 }}
+                  />
+                ) : null}
+                <Upload.Dragger
+                  name="image"
+                  accept="image/*"
+                  beforeUpload={async (file) => {
+                    const extension = file.name.split('.').pop()
+                    const safeFileName = `recipes/${Date.now()}.${extension}`
+                    const { error: uploadError } = await supabase.storage
+                      .from('recipe-images')
+                      .upload(safeFileName, file, {
+                        cacheControl: '3600',
+                        upsert: false
+                      })
+                    
+                    if (!uploadError) {
+                      const { data: { publicUrl } } = supabase.storage
+                        .from('recipe-images')
+                        .getPublicUrl(safeFileName)
+                      setEditRecipeImage(publicUrl)
+                      message.success('图片上传成功')
+                    } else {
+                      message.error('图片上传失败：' + uploadError.message)
+                    }
+                    return false
+                  }}
+                  fileList={editRecipeImage ? [{ uid: '1', name: 'recipe.jpg', status: 'done', url: editRecipeImage }] : []}
+                >
+                  <p className="ant-upload-text">点击或拖拽上传成品图片</p>
+                  <p className="ant-upload-hint">支持 JPG、PNG 格式</p>
+                </Upload.Dragger>
               </Form.Item>
               <Form.Item
                 name="description"
