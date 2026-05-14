@@ -10,16 +10,15 @@ import {
   Modal,
   Form,
   message,
-  List,
   Tag,
-  Divider,
   Badge,
-  Checkbox,
-  Spin,
   Upload,
   Image,
+  Switch,
+  Drawer,
+  Select,
+  Divider,
 } from 'antd'
-import { UploadOutlined, XOutlined } from '@ant-design/icons'
 import {
   HomeOutlined,
   UserOutlined,
@@ -29,10 +28,10 @@ import {
   BookOutlined,
   SmileOutlined,
   ForkOutlined,
-  CheckCircleOutlined,
-  ClockCircleOutlined,
-  LinkOutlined,
-  DownloadOutlined,
+  SlidersOutlined,
+  DeleteOutlined,
+  EditOutlined,
+  XOutlined,
 } from '@ant-design/icons'
 import { supabase } from '../supabase'
 import { homeRecipes } from '../data/recipes'
@@ -43,29 +42,30 @@ const { Search } = Input
 
 function Home({ user }) {
   const [recipes, setRecipes] = useState([])
+  const [categories, setCategories] = useState([])
+  const [activeCategory, setActiveCategory] = useState('default')
   const [searchTerm, setSearchTerm] = useState('')
   const [isAddModalVisible, setIsAddModalVisible] = useState(false)
+  const [addMode, setAddMode] = useState('manual')
   const [selectedRecipes, setSelectedRecipes] = useState([])
-  const [orders, setOrders] = useState([])
-  const [orderItems, setOrderItems] = useState([])
-  const [douguoRecipes, setDouguoRecipes] = useState([])
-  const [douguoLoading, setDouguoLoading] = useState(false)
-  const [douguoSearch, setDouguoSearch] = useState('')
-  const [isPriceModalVisible, setIsPriceModalVisible] = useState(false)
   const [currentRecipe, setCurrentRecipe] = useState(null)
   const [currentRecipeImage, setCurrentRecipeImage] = useState(null)
-  const [priceForm, setPriceForm] = useState({ price: '', priceType: '' })
+  const [editRecipeImage, setEditRecipeImage] = useState(null)
   const [addRecipeImage, setAddRecipeImage] = useState(null)
-  const [isConfirmModalVisible, setIsConfirmModalVisible] = useState(false)
-  const [currentOrder, setCurrentOrder] = useState(null)
-  const [orderItemImages, setOrderItemImages] = useState({})
+  const [stepsImage, setStepsImage] = useState(null)
+  const [stepsType, setStepsType] = useState('text')
+  const [isEditModalVisible, setIsEditModalVisible] = useState(false)
+  const [isCategoryModalVisible, setIsCategoryModalVisible] = useState(false)
+  const [categoryForm, setCategoryForm] = useState({ name: '', id: null })
+  const [slideDeleteId, setSlideDeleteId] = useState(null)
+  const [isCartModalVisible, setIsCartModalVisible] = useState(false)
   const navigate = useNavigate()
   const [form] = Form.useForm()
+  const [editForm] = Form.useForm()
 
   useEffect(() => {
     fetchRecipes()
-    fetchOrders()
-    fetchDouguoRecipes()
+    fetchCategories()
   }, [])
 
   const fetchRecipes = async () => {
@@ -79,55 +79,46 @@ function Home({ user }) {
     }
   }
 
-  const fetchOrders = async () => {
-    if (user.user_type === 'chef') {
-      const { data, error } = await supabase
-        .from('orders')
-        .select('*, order_items(*, recipes(*))')
-        .eq('status', 'pending')
-        .order('created_at', { ascending: false })
-
-      if (data) {
-        setOrders(data)
-      }
-    }
-  }
-
-  const fetchOrderItems = async (orderIds) => {
-    if (orderIds.length === 0) return
+  const fetchCategories = async () => {
     const { data, error } = await supabase
-      .from('order_items')
-      .select('*, recipes(*)')
-      .in('order_id', orderIds)
+      .from('categories')
+      .select('*')
+      .order('created_at', { ascending: false })
 
     if (data) {
-      setOrderItems(data)
+      setCategories(data)
+    } else {
+      createDefaultCategory()
     }
   }
 
-  const fetchDouguoRecipes = async () => {
-    setDouguoLoading(true)
-    try {
-      setDouguoRecipes(homeRecipes)
-    } catch (error) {
-      console.error('获取豆果美食数据失败:', error)
-      message.error('获取菜谱数据失败，使用本地数据')
-    } finally {
-      setDouguoLoading(false)
+  const createDefaultCategory = async () => {
+    const { data, error } = await supabase
+      .from('categories')
+      .insert([{ name: '默认分类' }])
+      .select()
+
+    if (data) {
+      setCategories(data)
     }
   }
 
-  const filteredRecipes = recipes.filter(
-    (recipe) =>
+  const filteredRecipes = recipes.filter(recipe => {
+    const matchesSearch = 
       recipe.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
       recipe.description.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+    const matchesCategory = activeCategory === 'default' || recipe.category_id === activeCategory
+    return matchesSearch && matchesCategory
+  })
 
-  const filteredDouguoRecipes = douguoRecipes.filter(
-    (recipe) =>
-      recipe.name.toLowerCase().includes(douguoSearch.toLowerCase()) ||
-      recipe.description.toLowerCase().includes(douguoSearch.toLowerCase())
-  )
+  const chefRecipes = recipes.filter(r => r.chef_id === user.id)
+  const filteredChefRecipes = chefRecipes.filter(recipe => {
+    const matchesSearch = 
+      recipe.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      recipe.description.toLowerCase().includes(searchTerm.toLowerCase())
+    const matchesCategory = activeCategory === 'default' || recipe.category_id === activeCategory
+    return matchesSearch && matchesCategory
+  })
 
   const handleAddRecipe = async (values) => {
     const { data, error } = await supabase.from('recipes').insert([
@@ -135,11 +126,13 @@ function Home({ user }) {
         name: values.name,
         description: values.description,
         ingredients: values.ingredients,
-        steps: values.steps,
+        steps: stepsImage || values.steps,
         price: values.price,
         price_type: values.priceType,
         chef_id: user.id,
         image_url: addRecipeImage || null,
+        category_id: values.category || activeCategory,
+        steps_type: stepsImage ? 'image' : 'text',
       },
     ])
 
@@ -149,44 +142,199 @@ function Home({ user }) {
       message.success('菜谱添加成功')
       setIsAddModalVisible(false)
       setAddRecipeImage(null)
+      setStepsImage(null)
+      form.resetFields()
       fetchRecipes()
     }
   }
 
-  const handleAddFromDouguo = (douguoRecipe) => {
-    setCurrentRecipe(douguoRecipe)
-    setPriceForm({ price: '', priceType: '' })
-    setIsPriceModalVisible(true)
+  const handleUpdateRecipe = async (values) => {
+    const { data, error } = await supabase
+      .from('recipes')
+      .update({
+        name: values.name,
+        description: values.description,
+        ingredients: values.ingredients,
+        steps: stepsImage || values.steps,
+        price: values.price,
+        price_type: values.priceType,
+        image_url: editRecipeImage || currentRecipe.image_url,
+        category_id: values.category || currentRecipe.category_id,
+        steps_type: stepsImage ? 'image' : 'text',
+      })
+      .eq('id', currentRecipe.id)
+
+    if (error) {
+      message.error(error.message)
+    } else {
+      message.success('菜谱更新成功')
+      setIsEditModalVisible(false)
+      setCurrentRecipe(null)
+      setEditRecipeImage(null)
+      setStepsImage(null)
+      editForm.resetFields()
+      fetchRecipes()
+    }
   }
 
-  const handleConfirmPrice = async () => {
-    if (!priceForm.price || !priceForm.priceType) {
-      message.warning('请填写完整的价格信息')
-      return
-    }
+  const [deleteConfirmModal, setDeleteConfirmModal] = useState(false)
+  const [recipeToDelete, setRecipeToDelete] = useState(null)
 
+  const handleDeleteRecipe = (recipeId) => {
+    setRecipeToDelete(recipeId)
+    setDeleteConfirmModal(true)
+  }
+
+  const confirmDeleteRecipe = async () => {
+    if (!recipeToDelete) return
+    
+    const { error } = await supabase
+      .from('recipes')
+      .delete()
+      .eq('id', recipeToDelete)
+
+    if (error) {
+      message.error(error.message)
+    } else {
+      message.success('菜谱删除成功')
+      fetchRecipes()
+    }
+    
+    setDeleteConfirmModal(false)
+    setRecipeToDelete(null)
+  }
+
+  const handleAddFromHomeRecipes = async (recipe) => {
     const { data, error } = await supabase.from('recipes').insert([
       {
-        name: currentRecipe.name,
-        description: currentRecipe.description,
-        ingredients: currentRecipe.ingredients,
-        steps: currentRecipe.steps,
-        price: parseFloat(priceForm.price),
-        price_type: priceForm.priceType,
+        name: recipe.name,
+        description: recipe.description,
+        ingredients: recipe.ingredients,
+        steps: recipe.steps,
+        price: '',
+        price_type: '',
         chef_id: user.id,
-        image_url: currentRecipeImage || null,
+        image_url: recipe.image,
+        category_id: activeCategory,
+        steps_type: 'text',
       },
     ])
 
     if (error) {
       message.error(error.message)
     } else {
-      message.success('菜谱已添加到我的菜谱列表')
-      setIsPriceModalVisible(false)
-      setCurrentRecipe(null)
-      setCurrentRecipeImage(null)
+      message.success('菜谱已添加到我的菜谱')
+      setIsAddModalVisible(false)
       fetchRecipes()
     }
+  }
+
+  const handleAddCategory = async () => {
+    if (!categoryForm.name.trim()) {
+      message.error('请输入分类名称')
+      return
+    }
+
+    if (categoryForm.id) {
+      const { error } = await supabase
+        .from('categories')
+        .update({ name: categoryForm.name })
+        .eq('id', categoryForm.id)
+
+      if (error) {
+        message.error(error.message)
+      } else {
+        message.success('分类更新成功')
+        fetchCategories()
+      }
+    } else {
+      const { error } = await supabase
+        .from('categories')
+        .insert([{ name: categoryForm.name }])
+
+      if (error) {
+        message.error(error.message)
+      } else {
+        message.success('分类添加成功')
+        fetchCategories()
+      }
+    }
+
+    setCategoryForm({ name: '', id: null })
+    setIsCategoryModalVisible(false)
+  }
+
+  const handleDeleteCategory = async (categoryId) => {
+    const { error } = await supabase
+      .from('categories')
+      .delete()
+      .eq('id', categoryId)
+
+    if (error) {
+      message.error(error.message)
+    } else {
+      message.success('分类删除成功')
+      if (activeCategory === categoryId) {
+        setActiveCategory('default')
+      }
+      fetchCategories()
+      fetchRecipes()
+    }
+  }
+
+  const handleAddToCart = (recipe) => {
+    setSelectedRecipes(prev => {
+      const exists = prev.find(r => r.id === recipe.id)
+      if (exists) {
+        return prev.map(r =>
+          r.id === recipe.id ? { ...r, quantity: r.quantity + 1 } : r
+        )
+      }
+      return [...prev, { ...recipe, quantity: 1 }]
+    })
+    message.success('已添加到购物车')
+  }
+
+  const updateCartQuantity = (recipeId, quantity) => {
+    if (quantity <= 0) {
+      removeFromCart(recipeId)
+      return
+    }
+    setSelectedRecipes(prev =>
+      prev.map(r =>
+        r.id === recipeId ? { ...r, quantity } : r
+      )
+    )
+  }
+
+  const removeFromCart = (recipeId) => {
+    setSelectedRecipes(prev => prev.filter(r => r.id !== recipeId))
+  }
+
+  const getCartTotal = () => {
+    const totalsByUnit = {}
+    
+    selectedRecipes.forEach(item => {
+      const price = parseFloat(item.price) || 0
+      const quantity = item.quantity || 1
+      const unit = item.price_type || '元'
+      
+      if (!totalsByUnit[unit]) {
+        totalsByUnit[unit] = 0
+      }
+      totalsByUnit[unit] += price * quantity
+    })
+    
+    const sortedUnits = Object.keys(totalsByUnit).sort((a, b) => {
+      if (a === '元') return -1
+      if (b === '元') return 1
+      return a.localeCompare(b)
+    })
+    
+    return sortedUnits.map(unit => {
+      const total = totalsByUnit[unit].toFixed(2)
+      return `${total} ${unit}`
+    }).join(' + ')
   }
 
   const handleOrder = async () => {
@@ -209,7 +357,7 @@ function Home({ user }) {
     const orderItemsData = selectedRecipes.map((recipe) => ({
       order_id: orderId,
       recipe_id: recipe.id,
-      quantity: 1,
+      quantity: recipe.quantity,
     }))
 
     const { error: itemsError } = await supabase
@@ -224,336 +372,218 @@ function Home({ user }) {
     }
   }
 
-  const handleConfirmOrder = (orderId) => {
-    const order = orders.find(o => o.id === orderId)
-    if (order) {
-      setCurrentOrder(order)
-      setOrderItemImages({})
-      setIsConfirmModalVisible(true)
-    }
+  const handleStartSlide = (recipeId) => {
+    setSlideDeleteId(recipeId)
   }
 
-  const handleConfirmWithImages = async () => {
-    for (const [itemId, imageUrl] of Object.entries(orderItemImages)) {
-      await supabase
-        .from('order_items')
-        .update({ finished_image: imageUrl })
-        .eq('id', parseInt(itemId))
-
-      const item = currentOrder.order_items.find(i => i.id === parseInt(itemId))
-      if (item && item.recipe_id) {
-        await supabase
-          .from('recipes')
-          .update({ image_url: imageUrl })
-          .eq('id', item.recipe_id)
-      }
-    }
-
-    const { error } = await supabase
-      .from('orders')
-      .update({ status: 'completed' })
-      .eq('id', currentOrder.id)
-
-    if (error) {
-      message.error(error.message)
-    } else {
-      message.success('订单已确认，成品图已同步更新到菜谱')
-      setIsConfirmModalVisible(false)
-      setCurrentOrder(null)
-      setOrderItemImages({})
-      window.location.reload()
-    }
+  const handleEndSlide = () => {
+    setTimeout(() => setSlideDeleteId(null), 300)
   }
 
-  const toggleRecipeSelection = (recipe) => {
-    setSelectedRecipes((prev) => {
-      const exists = prev.find((r) => r.id === recipe.id)
-      if (exists) {
-        return prev.filter((r) => r.id !== recipe.id)
-      }
-      return [...prev, recipe]
-    })
+  const getCategoryName = (categoryId) => {
+    const category = categories.find(c => c.id === categoryId)
+    return category?.name || '默认分类'
   }
 
-  const getTotalPrice = () => {
-    const totalsByUnit = {}
-    selectedRecipes.forEach((recipe) => {
-      const unit = recipe.price_type || '单位'
-      const price = recipe.price || 0
-      if (totalsByUnit[unit]) {
-        totalsByUnit[unit] += price
-      } else {
-        totalsByUnit[unit] = price
-      }
-    })
-    return Object.entries(totalsByUnit)
-      .map(([unit, amount]) => `${amount} ${unit}`)
-      .join(' + ')
-  }
+  const renderChefHome = () => (
+    <Layout className="chef-layout">
+      <div className="chef-header-bg">
+        <div className="chef-header-content">
+          <div className="chef-brand">
+            <div className="brand-icon">👩🍳</div>
+            <div className="brand-text">
+              <h1>张爹厨房</h1>
+              <p>张爹带你吃香喝辣</p>
+            </div>
+          </div>
+        </div>
+      </div>
 
-  const logout = async () => {
-    await supabase.auth.signOut()
-    navigate('/login')
-  }
+      <div className="chef-toolbar">
+        <div className="toolbar-actions">
+          <Button 
+            type="primary" 
+            size="small"
+            icon={<PlusOutlined />}
+            onClick={() => setIsAddModalVisible(true)}
+          >
+            添加菜谱
+          </Button>
+          <Search
+            placeholder="搜索"
+            allowClear
+            size="small"
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="chef-search"
+          />
+        </div>
+      </div>
 
-  const chefOrders = orders.map((order) => ({
-    ...order,
-    items: order.order_items || [],
-  }))
-
-  const getIngredientsList = () => {
-    const ingredients = new Set()
-    chefOrders.forEach((order) => {
-      order.items.forEach((item) => {
-        if (item.recipes?.ingredients) {
-          item.recipes.ingredients.split(';').forEach((ing) => {
-            ingredients.add(ing.trim())
-          })
-        }
-      })
-    })
-    return Array.from(ingredients)
-  }
-
-  if (user.user_type === 'chef') {
-    return (
-      <Layout className="chef-layout">
-        <Header className="header">
-          <div className="logo">🍳 张爹厨房</div>
-          <nav className="desktop-nav">
-            <Menu theme="dark" mode="horizontal" defaultSelectedKeys={['1']}>
-              <Menu.Item key="1" icon={<HomeOutlined />}>首页</Menu.Item>
-              <Menu.Item key="2" icon={<UserOutlined />} onClick={() => navigate('/profile')}>
-                个人中心
-              </Menu.Item>
-              <Menu.Item key="3" icon={<SmileOutlined />} onClick={logout}>
-                退出登录
-              </Menu.Item>
-            </Menu>
-          </nav>
-        </Header>
-        <Layout>
-          <Content className="chef-content">
-            <div className="search-bar">
-              {/* <Search
-                placeholder="搜索菜谱"
-                allowClear
-                enterButton={<SearchOutlined />}
-                size="large"
-                onSearch={setSearchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-              /> */}
-              <Button
-                type="primary"
-                size="large"
-                icon={<PlusOutlined />}
-                onClick={() => setIsAddModalVisible(true)}
+      <div className="chef-two-column">
+        <div className="category-sidebar">
+          <div className="category-list">
+            <div 
+              className={`category-item ${activeCategory === 'default' ? 'active' : ''}`}
+              onClick={() => setActiveCategory('default')}
+            >
+              全部
+            </div>
+            {categories.map(category => (
+              <div
+                key={category.id}
+                className={`category-item ${activeCategory === category.id ? 'active' : ''}`}
+                onClick={() => setActiveCategory(category.id)}
               >
-                添加个人菜谱
-              </Button>
-            </div>
-
-            {chefOrders.length > 0 && (
-              <div className="chef-orders-section">
-                <div className="section-title">
-                  <ShoppingCartOutlined /> 待处理订单{' '}
-                  <Badge count={chefOrders.length} />
-                </div>
-                <div className="orders-list">
-                  {chefOrders.map((order) => (
-                    <Card key={order.id} className="order-card">
-                      <div className="order-header">
-                        <div className="order-info">
-                          <span className="order-id">订单 #{order.id}</span>
-                          <Tag color="orange">待确认</Tag>
-                        </div>
-                        <div className="order-time">
-                          {new Date(order.created_at).toLocaleString('zh-CN')}
-                        </div>
-                      </div>
-                      <div className="order-items">
-                        {order.items.map((item) => (
-                          <div key={item.id} className="order-item">
-                            <div className="item-info">
-                              <span className="item-name">{item.recipes?.name}</span>
-                              <span className="quantity">x{item.quantity}</span>
-                            </div>
-                            <span className="item-price">
-                              {item.recipes?.price} {item.recipes?.price_type}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="order-footer">
-                        <Button
-                          type="primary"
-                          size="small"
-                          onClick={() => handleConfirmOrder(order.id)}
-                        >
-                          <CheckCircleOutlined /> 确认已完成
-                        </Button>
-                      </div>
-                    </Card>
-                  ))}
-                </div>
-                <div className="ingredients-panel">
-                  <div className="section-title">📝 备菜清单</div>
-                  <div className="ingredients-list">
-                    {getIngredientsList().map((ing, idx) => (
-                      <div key={idx} className="ingredient-item">
-                        <Checkbox>{ing}</Checkbox>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                {category.name}
               </div>
-            )}
-
-            <div className="douguo-section">
-              <div className="douguo-title">
-                <LinkOutlined /> 家常精选菜谱
-              </div>
-              <Search
-                placeholder="搜索家常菜谱"
-                allowClear
-                enterButton={<SearchOutlined />}
-                size="middle"
-                onSearch={(value) => setDouguoSearch(value)}
-                onChange={(e) => setDouguoSearch(e.target.value)}
-                style={{ marginBottom: 12, width: '100%' }}
-              />
-              <Spin spinning={douguoLoading}>
-                <div className="douguo-list">
-                  {filteredDouguoRecipes.map((recipe) => (
-                    <div key={recipe.id} className="douguo-item">
-                      <div className="douguo-item-title">{recipe.name}</div>
-                      <div className="douguo-item-desc">{recipe.description}</div>
-                      <div className="douguo-item-meta">
-                        <span>⏱️ {recipe.cookTime}</span>
-                        <span>📊 {recipe.difficulty}</span>
-                      </div>
-                      <Button
-                        type="primary"
-                        size="small"
-                        icon={<DownloadOutlined />}
-                        className="douguo-add-btn"
-                        onClick={() => handleAddFromDouguo(recipe)}
-                      >
-                        添加到我的菜谱
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              </Spin>
+            ))}
+            <div 
+              className="category-item manage"
+              onClick={() => setIsCategoryModalVisible(true)}
+            >
+              <SlidersOutlined /> 分类管理
             </div>
+          </div>
+        </div>
 
-            <Divider />
-            <h3 className="section-title">
-              <BookOutlined /> 我的菜谱
-            </h3>
-            <Row gutter={[16, 16]}>
-              {filteredRecipes.map((recipe) => (
-                <Col xs={24} sm={12} md={8} lg={6} key={recipe.id}>
+        <Content className="chef-content">
+          <div className="chef-recipes-list">
+            {filteredChefRecipes.length > 0 ? (
+              filteredChefRecipes.map(recipe => (
+                <div key={recipe.id} className="chef-recipe-item">
                   <Card
+                    className="chef-recipe-card"
                     hoverable
-                    className="recipe-card"
-                    title={recipe.name}
-                    cover={recipe.image_url ? (
+                    onClick={() => {
+                      setCurrentRecipe(recipe)
+                      setEditRecipeImage(null)
+                      setStepsImage(null)
+                      setIsEditModalVisible(true)
+                    }}
+                  >
+                    <div className="recipe-delete-btn" onClick={(e) => {
+                      e.stopPropagation()
+                      handleDeleteRecipe(recipe.id)
+                    }}>
+                      <DeleteOutlined />
+                    </div>
+                    <div className="recipe-card-left">
                       <Image
                         alt={recipe.name}
-                        src={recipe.image_url}
-                        style={{ height: 200, objectFit: 'cover' }}
+                        src={recipe.image_url || 'https://picnew.90sheji.com/design/00/23/31/57/5a33e781a29d0.png?_upd=90sheji_linggan_13641061.png'}
+                        className="chef-recipe-image"
+                        fallback="https://picnew.90sheji.com/design/00/23/31/57/5a33e781a29d0.png?_upd=90sheji_linggan_13641061.png"
                       />
-                    ) : undefined}
-                    extra={
-                      <Tag color={recipe.chef_id === user.id ? 'green' : 'blue'}>
-                        {recipe.chef_id === user.id ? '我的菜谱' : '其他厨师'}
-                      </Tag>
-                    }
-                  >
-                    <p className="recipe-price">
-                      <strong>{recipe.price}</strong> {recipe.price_type}
-                    </p>
-                    <p className="recipe-desc">{recipe.description}</p>
-                    <div className="recipe-ingredients-full">
-                      <span className="ingredients-label">食材：</span>
-                      {recipe.ingredients?.split(';').map((ing, idx) => (
-                        <span key={idx}>{ing}{idx < recipe.ingredients.split(';').length - 1 ? '；' : ''}</span>
-                      ))}
                     </div>
-                    <div className="recipe-steps">
-                      <div className="recipe-steps-title">👩🍳 做法步骤</div>
-                      {recipe.steps?.split(';').map((step, idx) => (
-                        <div key={idx} className="recipe-step-item">
-                          <strong>{idx + 1}.</strong> {step.replace(/^\d+\./, '')}
+                    <div className="recipe-card-right">
+                      <div className="recipe-name">{recipe.name}</div>
+                      <div className="recipe-desc">
+                          {recipe.description || '美味佳肴'}
                         </div>
-                      ))}
-                    </div>
-                  </Card>
-                </Col>
-              ))}
-            </Row>
+                        <div className="recipe-bottom">
+                          <div className="recipe-price">
+                            {recipe.price ? `${recipe.price} ${recipe.price_type}` : '未定价'}
+                          </div>
+                        </div>
+                      </div>
+                    </Card>
+                </div>
+              ))
+            ) : (
+              <div className="empty-state">
+                <p>暂无菜谱</p>
+                <p className="empty-hint">点击上方按钮添加</p>
+              </div>
+            )}
+          </div>
+        </Content>
+      </div>
 
-            </Content>
-          
-        </Layout>
-        <footer className="bottom-nav">
-          <div className="bottom-nav-item active" onClick={() => navigate('/')}>
-            <HomeOutlined />
-            <span>首页</span>
-          </div>
-          <div className="bottom-nav-item" onClick={() => navigate('/profile')}>
-            <UserOutlined />
-            <span>个人中心</span>
-          </div>
-          <div className="bottom-nav-item" onClick={logout}>
-            <SmileOutlined />
-            <span>退出</span>
-          </div>
-        </footer>
-        <Modal
-          title="添加新菜谱"
-          visible={isAddModalVisible}
-          onCancel={() => setIsAddModalVisible(false)}
-          footer={null}
-        >
+      <footer className="bottom-nav">
+        <div className="bottom-nav-item active" onClick={() => navigate('/')}>
+          <HomeOutlined />
+          <span>首页</span>
+        </div>
+        <div className="bottom-nav-item" onClick={() => navigate('/orders')}>
+          <ShoppingCartOutlined />
+          <span>订单</span>
+        </div>
+        <div className="bottom-nav-item" onClick={() => navigate('/profile')}>
+          <UserOutlined />
+          <span>我的</span>
+        </div>
+      </footer>
+
+      <Modal
+        title="添加菜谱"
+        visible={isAddModalVisible}
+        onCancel={() => {
+          setIsAddModalVisible(false)
+          setAddMode('manual')
+          setAddRecipeImage(null)
+          setStepsImage(null)
+          form.resetFields()
+        }}
+        footer={null}
+        width={600}
+      >
+        <div className="add-recipe-tabs">
+          <button 
+            className={`tab-btn ${addMode === 'manual' ? 'active' : ''}`}
+            onClick={() => setAddMode('manual')}
+          >
+            自行添加
+          </button>
+          <button 
+            className={`tab-btn ${addMode === 'search' ? 'active' : ''}`}
+            onClick={() => setAddMode('search')}
+          >
+            搜索菜谱
+          </button>
+        </div>
+
+        {addMode === 'manual' ? (
           <Form
-            name="addRecipe"
+            form={form}
             layout="vertical"
             onFinish={handleAddRecipe}
           >
             <Form.Item
               name="name"
-              label="菜谱名称"
-              rules={[{ required: true, message: '请输入菜谱名称' }]}
+              label="菜品名称"
+              rules={[{ required: true, message: '请输入菜品名称' }]}
             >
-              <Input placeholder="例如：红烧肉" />
+              <Input placeholder="例如：宫保鸡丁" />
             </Form.Item>
-            <Form.Item
-              name="image"
-              label="成品图片"
-            >
+
+            <Form.Item name="description" label="描述">
+              <Input.TextArea placeholder="简单描述一下这道菜" />
+            </Form.Item>
+
+            <Form.Item name="category" label="分类">
+              <Select options={
+                categories.map(c => ({ value: c.id, label: c.name }))
+              } placeholder="选择分类" />
+            </Form.Item>
+
+            <Form.Item label="成品图">
               {addRecipeImage && (
                 <Image
-                  alt="已上传图片"
+                  alt="预览"
                   src={addRecipeImage}
-                  style={{ width: '100%', height: 200, objectFit: 'cover', marginBottom: 12 }}
+                  style={{ width: '100%', height: 120, objectFit: 'contain', marginBottom: 12 }}
                 />
               )}
               <Upload.Dragger
                 name="image"
                 accept="image/*"
-                fileList={[]}
                 beforeUpload={async (file) => {
                   const extension = file.name.split('.').pop()
                   const safeFileName = `recipes/${Date.now()}.${extension}`
                   const { error: uploadError } = await supabase.storage
                     .from('recipe-images')
-                    .upload(safeFileName, file, {
-                      cacheControl: '3600',
-                      upsert: false
-                    })
-                  
+                    .upload(safeFileName, file, { cacheControl: '3600', upsert: false })
+
                   if (!uploadError) {
                     const { data: { publicUrl } } = supabase.storage
                       .from('recipe-images')
@@ -566,106 +596,53 @@ function Home({ user }) {
                   return false
                 }}
               >
-                <p className="ant-upload-text">点击或拖拽上传成品图片</p>
+                <p className="ant-upload-text">点击上传成品图</p>
                 <p className="ant-upload-hint">支持 JPG、PNG 格式</p>
               </Upload.Dragger>
             </Form.Item>
-            <Form.Item
-              name="description"
-              label="菜谱描述"
-              rules={[{ required: true, message: '请输入菜谱描述' }]}
-            >
-              <Input.TextArea placeholder="简单描述这道菜" />
-            </Form.Item>
+
             <Form.Item
               name="ingredients"
-              label="所需食材"
-              rules={[{ required: true, message: '请输入所需食材' }]}
+              label="食材"
+              rules={[{ required: true, message: '请输入食材' }]}
             >
-              <Input.TextArea placeholder="用分号分隔，例如：猪肉;生姜;料酒" />
+              <Input.TextArea placeholder="用分号分隔多个食材，例如：鸡肉200克;花生50克;青椒1个" />
             </Form.Item>
-            <Form.Item
-              name="steps"
-              label="做法步骤"
-              rules={[{ required: true, message: '请输入做法步骤' }]}
-            >
-              <Input.TextArea rows={4} placeholder="详细描述烹饪步骤" />
-            </Form.Item>
-            <Row gutter={16}>
-              <Col span={12}>
-                <Form.Item
-                  name="price"
-                  label="价格数值"
-                  rules={[{ required: true, message: '请输入价格' }]}
-                >
-                  <Input type="number" placeholder="例如：10" />
-                </Form.Item>
-              </Col>
-              <Col span={12}>
-                <Form.Item
-                  name="priceType"
-                  label="支付形式"
-                  rules={[{ required: true, message: '请输入支付形式' }]}
-                >
-                  <Input placeholder="例如：元/拳/家务" />
-                </Form.Item>
-              </Col>
-            </Row>
-            <Form.Item>
-              <Button type="primary" htmlType="submit" block>
-                添加菜谱
-              </Button>
-            </Form.Item>
-          </Form>
-        </Modal>
 
-        <Modal
-          title="设置菜谱价格"
-          visible={isPriceModalVisible}
-          onCancel={() => {
-            setIsPriceModalVisible(false)
-            setCurrentRecipe(null)
-          }}
-          footer={null}
-        >
-          {currentRecipe && (
-            <div>
-              <p className="price-modal-title">菜谱：{currentRecipe.name}</p>
-              <Form
-                name="priceForm"
-                layout="vertical"
-                initialValues={priceForm}
-              >
-                <Form.Item
-                  name="image"
-                  label="成品图片"
-                >
-                  {currentRecipeImage && (
+            <Form.Item label="做法">
+              <Switch
+                checked={stepsType === 'image'}
+                onChange={(checked) => {
+                  setStepsType(checked ? 'image' : 'text')
+                  if (!checked) setStepsImage(null)
+                }}
+                checkedChildren="图片做法"
+                unCheckedChildren="文字做法"
+              />
+              {stepsType === 'image' ? (
+                <div>
+                  {stepsImage && (
                     <Image
-                      alt="已上传图片"
-                      src={currentRecipeImage}
-                      style={{ width: '100%', height: 200, objectFit: 'cover', marginBottom: 12 }}
+                      alt="做法图片"
+                      src={stepsImage}
+                      style={{ width: '100%', height: 150, objectFit: 'contain', marginBottom: 12 }}
                     />
                   )}
                   <Upload.Dragger
-                    name="image"
+                    name="steps-image"
                     accept="image/*"
-                    fileList={[]}
                     beforeUpload={async (file) => {
                       const extension = file.name.split('.').pop()
-                      const safeFileName = `recipes/${Date.now()}.${extension}`
+                      const safeFileName = `steps/${Date.now()}.${extension}`
                       const { error: uploadError } = await supabase.storage
                         .from('recipe-images')
-                        .upload(safeFileName, file, {
-                          cacheControl: '3600',
-                          upsert: false
-                        })
-                      
+                        .upload(safeFileName, file, { cacheControl: '3600', upsert: false })
+
                       if (!uploadError) {
                         const { data: { publicUrl } } = supabase.storage
                           .from('recipe-images')
                           .getPublicUrl(safeFileName)
-                        setCurrentRecipeImage(publicUrl)
+                        setStepsImage(publicUrl)
                         message.success('图片上传成功')
                       } else {
                         message.error('图片上传失败：' + uploadError.message)
@@ -673,226 +650,494 @@ function Home({ user }) {
                       return false
                     }}
                   >
-                    <p className="ant-upload-text">点击或拖拽上传成品图片</p>
-                    <p className="ant-upload-hint">支持 JPG、PNG 格式</p>
+                    <p className="ant-upload-text">点击上传做法图片</p>
                   </Upload.Dragger>
-                </Form.Item>
-                <Form.Item
-                  name="price"
-                  label="价格数值"
-                  rules={[{ required: true, message: '请输入价格' }]}
-                >
-                  <Input
-                    type="number"
-                    placeholder="例如：10"
-                    value={priceForm.price}
-                    onChange={(e) => setPriceForm({ ...priceForm, price: e.target.value })}
-                  />
-                </Form.Item>
-                <Form.Item
-                  name="priceType"
-                  label="支付形式"
-                  rules={[{ required: true, message: '请输入支付形式' }]}
-                >
-                  <Input
-                    placeholder="例如：元/拳/家务/拥抱"
-                    value={priceForm.priceType}
-                    onChange={(e) => setPriceForm({ ...priceForm, priceType: e.target.value })}
-                  />
-                </Form.Item>
-                <Form.Item>
-                    <Button type="primary" onClick={handleConfirmPrice} block>
-                      确认添加
-                    </Button>
-                  </Form.Item>
-                </Form>
-              </div>
-            )}
-          </Modal>
-
-          <Modal
-            title="确认订单完成"
-            visible={isConfirmModalVisible}
-            onCancel={() => {
-              setIsConfirmModalVisible(false)
-              setCurrentOrder(null)
-              setOrderItemImages({})
-            }}
-            footer={null}
-            width={600}
-          >
-            {currentOrder && currentOrder.order_items && currentOrder.order_items.length > 0 && (
-              <div>
-                <p className="price-modal-title">订单 #{currentOrder.id}</p>
-                <p className="order-items-title">请为以下菜品上传成品图（可选）：</p>
-                <div className="order-items-images">
-                  {currentOrder.order_items.map((item) => (
-                    <div key={item.id} className="order-item-image">
-                      <div className="item-image-header">
-                        <span className="item-image-name">{item.recipes?.name}</span>
-                        <span className="item-image-quantity">x{item.quantity}</span>
-                      </div>
-                      {orderItemImages[item.id] && (
-                        <Image
-                          alt={item.recipes?.name}
-                          src={orderItemImages[item.id]}
-                          style={{ width: '100%', height: 100, objectFit: 'contain', marginBottom: 12 }}
-                        />
-                      )}
-                      <Upload.Dragger
-                        name={`image-${item.id}`}
-                        accept="image/*"
-                        fileList={[]}
-                        beforeUpload={async (file) => {
-                          const extension = file.name.split('.').pop()
-                          const safeFileName = `orders/${Date.now()}.${extension}`
-                          const { error: uploadError } = await supabase.storage
-                            .from('recipe-images')
-                            .upload(safeFileName, file, {
-                              cacheControl: '3600',
-                              upsert: false
-                            })
-                          
-                          if (!uploadError) {
-                            const { data: { publicUrl } } = supabase.storage
-                              .from('recipe-images')
-                              .getPublicUrl(safeFileName)
-                            setOrderItemImages(prev => ({
-                              ...prev,
-                              [item.id]: publicUrl
-                            }))
-                            message.success('图片上传成功')
-                          } else {
-                            message.error('图片上传失败：' + uploadError.message)
-                          }
-                          return false
-                        }}
-                      >
-                        <p className="ant-upload-text">点击或拖拽上传成品图</p>
-                        <p className="ant-upload-hint">支持 JPG、PNG 格式</p>
-                      </Upload.Dragger>
-                    </div>
-                  ))}
                 </div>
-                <div className="confirm-modal-footer">
-                  <Button onClick={() => {
-                    setIsConfirmModalVisible(false)
-                    setCurrentOrder(null)
-                    setOrderItemImages({})
-                  }}>
-                    取消
-                  </Button>
-                  <Button type="primary" onClick={handleConfirmWithImages}>
-                    确认已完成
-                  </Button>
-                </div>
-              </div>
-            )}
-          </Modal>
-        </Layout>
-      )
-    }
+              ) : (
+                <Form.Item name="steps" noStyle>
+                  <Input.TextArea rows={4} placeholder="用分号分隔步骤，例如：1.准备食材;2.热锅加油;3.翻炒" />
+                </Form.Item>
+              )}
+            </Form.Item>
 
-  return (
-    <Layout className="foodie-layout">
-      <Header className="header">
-          <div className="logo">🍔 美食天地</div>
-          <nav className="desktop-nav">
-            <Menu theme="dark" mode="horizontal" defaultSelectedKeys={['1']}>
-              <Menu.Item key="1" icon={<HomeOutlined />}>首页</Menu.Item>
-              <Menu.Item key="2" icon={<UserOutlined />} onClick={() => navigate('/profile')}>
-                个人中心
-              </Menu.Item>
-              <Menu.Item key="3" icon={<ForkOutlined />} onClick={logout}>
-                退出登录
-              </Menu.Item>
-            </Menu>
-          </nav>
-        </Header>
-      <Content className="foodie-content">
-        <div className="search-bar">
-          <Search
-            placeholder="搜索想吃的菜"
-            allowClear
-            enterButton={<SearchOutlined />}
-            size="large"
-            onSearch={setSearchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        {selectedRecipes.length > 0 && (
-          <div className="cart-bar">
-            <ShoppingCartOutlined />
-            <span>已选择 {selectedRecipes.length} 道菜</span>
-            <span className="cart-total">
-              总计: {getTotalPrice()}
-            </span>
-            <Button type="primary" onClick={handleOrder}>
-              去下单
-            </Button>
+            <Form.Item
+              name="price"
+              label="价格"
+              rules={[{ required: true, message: '请输入价格' }]}
+            >
+              <Input type="number" placeholder="例如：50" />
+            </Form.Item>
+
+            <Form.Item
+              name="priceType"
+              label="支付形式"
+              rules={[{ required: true, message: '请输入支付形式' }]}
+            >
+              <Input placeholder="例如：元/拳/家务/拥抱" />
+            </Form.Item>
+
+            <Form.Item>
+              <Button type="primary" htmlType="submit" block>
+                确认添加
+              </Button>
+            </Form.Item>
+          </Form>
+        ) : (
+          <div className="search-recipes-modal">
+            <Search
+              placeholder="搜索菜谱"
+              allowClear
+              enterButton
+              size="large"
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="modal-search"
+            />
+            <div className="search-results">
+              {homeRecipes.slice(0, 10).map(recipe => (
+                <Card
+                  key={recipe.id}
+                  className="search-result-card"
+                  hoverable
+                  cover={recipe.image ? (
+                    <Image
+                      alt={recipe.name}
+                      src={recipe.image}
+                      className="result-image"
+                    />
+                  ) : undefined}
+                >
+                  <div className="result-name">{recipe.name}</div>
+                  {recipe.description && <div className="result-desc">{recipe.description}</div>}
+                  <Button 
+                    type="primary" 
+                    size="small"
+                    onClick={() => handleAddFromHomeRecipes(recipe)}
+                  >
+                    添加到我的菜谱
+                  </Button>
+                </Card>
+              ))}
+            </div>
           </div>
         )}
-        <Divider />
-        <h3 className="section-title">
-          <BookOutlined /> 今日菜谱
-        </h3>
-        <Row gutter={[16, 16]}>
-          {filteredRecipes.map((recipe) => (
-            <Col xs={24} sm={12} md={8} lg={6} key={recipe.id}>
-              <Card
-                hoverable
-                className={`recipe-card foodie-card ${
-                  selectedRecipes.find((r) => r.id === recipe.id)
-                    ? 'selected'
-                    : ''
-                }`}
-                title={recipe.name}
-                cover={recipe.image_url ? (
-                  <Image
-                    alt={recipe.name}
-                    src={recipe.image_url}
-                    style={{ height: 250, objectFit: 'cover' }}
-                  />
-                ) : undefined}
-                extra={
-                  <Checkbox
-                    checked={selectedRecipes.find((r) => r.id === recipe.id)}
-                    onChange={() => toggleRecipeSelection(recipe)}
-                  />
-                }
+      </Modal>
+
+      <Modal
+        title="编辑菜谱"
+        visible={isEditModalVisible}
+        onCancel={() => {
+          setIsEditModalVisible(false)
+          setCurrentRecipe(null)
+          setEditRecipeImage(null)
+          setStepsImage(null)
+          editForm.resetFields()
+        }}
+        footer={null}
+        width={600}
+      >
+        {currentRecipe && (
+          <Form
+            form={editForm}
+            layout="vertical"
+            initialValues={{
+              name: currentRecipe.name,
+              description: currentRecipe.description,
+              category: currentRecipe.category_id,
+              ingredients: currentRecipe.ingredients,
+              steps: currentRecipe.steps_type === 'text' ? currentRecipe.steps : '',
+              price: currentRecipe.price,
+              priceType: currentRecipe.price_type,
+            }}
+            onFinish={handleUpdateRecipe}
+          >
+            <Form.Item
+              name="name"
+              label="菜品名称"
+              rules={[{ required: true, message: '请输入菜品名称' }]}
+            >
+              <Input />
+            </Form.Item>
+
+            <Form.Item name="description" label="描述">
+              <Input.TextArea />
+            </Form.Item>
+
+            <Form.Item name="category" label="分类">
+              <Select options={
+                categories.map(c => ({ value: c.id, label: c.name }))
+              } placeholder="选择分类" />
+            </Form.Item>
+
+            <Form.Item label="成品图">
+              <Image
+                alt={currentRecipe.name}
+                src={editRecipeImage || currentRecipe.image_url || 'https://picnew.90sheji.com/design/00/23/31/57/5a33e781a29d0.png?_upd=90sheji_linggan_13641061.png'}
+                style={{ width: '100%', height: 120, objectFit: 'contain', marginBottom: 12 }}
+              />
+              <Upload.Dragger
+                name="image"
+                accept="image/*"
+                beforeUpload={async (file) => {
+                  const extension = file.name.split('.').pop()
+                  const safeFileName = `recipes/${Date.now()}.${extension}`
+                  const { error: uploadError } = await supabase.storage
+                    .from('recipe-images')
+                    .upload(safeFileName, file, { cacheControl: '3600', upsert: false })
+
+                  if (!uploadError) {
+                    const { data: { publicUrl } } = supabase.storage
+                      .from('recipe-images')
+                      .getPublicUrl(safeFileName)
+                    setEditRecipeImage(publicUrl)
+                    message.success('图片上传成功')
+                  } else {
+                    message.error('图片上传失败：' + uploadError.message)
+                  }
+                  return false
+                }}
               >
-                <div className="foodie-card-body">
-                  <div className="foodie-price">
-                    <span className="price-amount">{recipe.price}</span>
-                    <span className="price-unit">{recipe.price_type}</span>
-                  </div>
-                  <p className="foodie-desc">{recipe.description}</p>
-                  <div className="foodie-ingredients">
-                    <ForkOutlined className="ingredients-icon" />
-                    <span className="ingredients-text">{recipe.ingredients?.slice(0, 40)}...</span>
-                  </div>
+                <p className="ant-upload-text">点击上传成品图</p>
+              </Upload.Dragger>
+            </Form.Item>
+
+            <Form.Item
+              name="ingredients"
+              label="食材"
+              rules={[{ required: true, message: '请输入食材' }]}
+            >
+              <Input.TextArea />
+            </Form.Item>
+
+            <Form.Item label="做法">
+              <Switch
+                checked={currentRecipe.steps_type === 'image' || !!stepsImage}
+                onChange={(checked) => {
+                  if (!checked) setStepsImage(null)
+                }}
+                checkedChildren="图片做法"
+                unCheckedChildren="文字做法"
+              />
+              {(currentRecipe.steps_type === 'image' || !!stepsImage) ? (
+                <div>
+                  <Image
+                    alt="做法图片"
+                    src={stepsImage || currentRecipe.steps}
+                    style={{ width: '100%', height: 150, objectFit: 'contain', marginBottom: 12 }}
+                  />
+                  <Upload.Dragger
+                    name="steps-image"
+                    accept="image/*"
+                    beforeUpload={async (file) => {
+                      const extension = file.name.split('.').pop()
+                      const safeFileName = `steps/${Date.now()}.${extension}`
+                      const { error: uploadError } = await supabase.storage
+                        .from('recipe-images')
+                        .upload(safeFileName, file, { cacheControl: '3600', upsert: false })
+
+                      if (!uploadError) {
+                        const { data: { publicUrl } } = supabase.storage
+                          .from('recipe-images')
+                          .getPublicUrl(safeFileName)
+                        setStepsImage(publicUrl)
+                        message.success('图片上传成功')
+                      } else {
+                        message.error('图片上传失败：' + uploadError.message)
+                      }
+                      return false
+                    }}
+                  >
+                    <p className="ant-upload-text">点击上传做法图片</p>
+                  </Upload.Dragger>
                 </div>
-              </Card>
-            </Col>
-          ))}
-        </Row>
-      </Content>
+              ) : (
+                <Form.Item name="steps" noStyle>
+                  <Input.TextArea rows={4} />
+                </Form.Item>
+              )}
+            </Form.Item>
+
+            <Form.Item
+              name="price"
+              label="价格"
+              rules={[{ required: true, message: '请输入价格' }]}
+            >
+              <Input type="number" />
+            </Form.Item>
+
+            <Form.Item
+              name="priceType"
+              label="支付形式"
+              rules={[{ required: true, message: '请输入支付形式' }]}
+            >
+              <Input />
+            </Form.Item>
+
+            <Form.Item>
+              <Button type="primary" htmlType="submit" block>
+                保存修改
+              </Button>
+            </Form.Item>
+          </Form>
+        )}
+      </Modal>
+
+      <Modal
+        title="分类管理"
+        visible={isCategoryModalVisible}
+        onCancel={() => {
+          setIsCategoryModalVisible(false)
+          setCategoryForm({ name: '', id: null })
+        }}
+        footer={null}
+      >
+        <div className="category-modal">
+          <Input
+            placeholder="分类名称"
+            value={categoryForm.name}
+            onChange={(e) => setCategoryForm({ ...categoryForm, name: e.target.value })}
+          />
+          <Button 
+            type="primary" 
+            onClick={handleAddCategory}
+            className="category-submit-btn"
+          >
+            {categoryForm.id ? '更新分类' : '添加分类'}
+          </Button>
+          <Divider />
+          <div className="category-list">
+            {categories.map(category => (
+              <div key={category.id} className="category-item">
+                <span>{category.name}</span>
+                <div className="category-actions">
+                  <Button 
+                    size="small" 
+                    icon={<EditOutlined />}
+                    onClick={() => setCategoryForm({ name: category.name, id: category.id })}
+                  />
+                  <Button 
+                    size="small" 
+                    danger 
+                    icon={<DeleteOutlined />}
+                    onClick={() => handleDeleteCategory(category.id)}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        title="确认删除"
+        visible={deleteConfirmModal}
+        onCancel={() => {
+          setDeleteConfirmModal(false)
+          setRecipeToDelete(null)
+        }}
+        footer={[
+          <Button key="back" onClick={() => {
+            setDeleteConfirmModal(false)
+            setRecipeToDelete(null)
+          }}>
+            取消
+          </Button>,
+          <Button key="submit" type="primary" danger onClick={confirmDeleteRecipe}>
+            确认删除
+          </Button>,
+        ]}
+      >
+        <p>确定要删除这个菜谱吗？此操作无法撤销。</p>
+      </Modal>
+    </Layout>
+  )
+
+  const renderFoodieHome = () => (
+    <Layout className="chef-layout">
+      <div className="chef-header-bg">
+        <div className="chef-header-content">
+          <div className="chef-brand">
+            <div className="brand-icon">🍔</div>
+            <div className="brand-text">
+              <h1>张爹餐厅</h1>
+              <p>跟着张爹吃香喝辣</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div className="chef-toolbar">
+        <div className="toolbar-actions">
+          <Search
+            placeholder="搜索菜谱"
+            allowClear
+            size="small"
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="chef-search"
+          />
+        </div>
+      </div>
+
+      <div className="chef-two-column">
+        <div className="category-sidebar">
+          <div className="category-list">
+            <div 
+              className={`category-item ${activeCategory === 'default' ? 'active' : ''}`}
+              onClick={() => setActiveCategory('default')}
+            >
+              全部
+            </div>
+            {categories.map(category => (
+              <div
+                key={category.id}
+                className={`category-item ${activeCategory === category.id ? 'active' : ''}`}
+                onClick={() => setActiveCategory(category.id)}
+              >
+                {category.name}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <Content className="chef-content">
+          <div className="recipes-list">
+            {filteredRecipes.length > 0 ? (
+              filteredRecipes.map(recipe => (
+                <Card
+                  key={recipe.id}
+                  className="recipe-card"
+                  hoverable
+                >
+                  <div className="recipe-card-left">
+                    <Image
+                      alt={recipe.name}
+                      src={recipe.image_url}
+                      className="chef-recipe-image"
+                      fallback="https://picnew.90sheji.com/design/00/23/31/57/5a33e781a29d0.png?_upd=90sheji_linggan_13641061.png"
+                    />
+                  </div>
+                  <div className="recipe-card-right">
+                    <div className="recipe-name">{recipe.name}</div>
+                    <div className="recipe-desc">
+                      {recipe.description || '美味佳肴'}
+                    </div>
+                    <div className="recipe-bottom">
+                      <div className="recipe-price">
+                        {recipe.price ? `${recipe.price} ${recipe.price_type}` : '未定价'}
+                      </div>
+                      <Button
+                        type="primary"
+                        size="small"
+                        shape="circle"
+                        icon={<PlusOutlined />}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          handleAddToCart(recipe)
+                        }}
+                        className="add-cart-btn"
+                      />
+                    </div>
+                  </div>
+                </Card>
+              ))
+            ) : (
+              <div className="empty-state">
+                <p>暂无菜谱</p>
+                <p className="empty-hint">暂无可用菜谱</p>
+              </div>
+            )}
+          </div>
+        </Content>
+      </div>
+
+      {selectedRecipes.length > 0 && (
+        <div className="cart-footer">
+          <div className="cart-summary" onClick={() => setIsCartModalVisible(true)}>
+            <Badge count={selectedRecipes.reduce((sum, r) => sum + r.quantity, 0)}>
+              <ShoppingCartOutlined className="cart-icon" />
+            </Badge>
+            <span className="cart-total">
+              {getCartTotal()}
+            </span>
+            <span className="cart-hint">点击编辑</span>
+          </div>
+          <Button type="primary" onClick={handleOrder}>
+            去下单
+          </Button>
+        </div>
+      )}
+
+      <Modal
+        title="购物车"
+        visible={isCartModalVisible}
+        onCancel={() => setIsCartModalVisible(false)}
+        footer={null}
+      >
+        <div className="cart-modal">
+          {selectedRecipes.length === 0 ? (
+            <p className="empty-cart">购物车为空</p>
+          ) : (
+            <div className="cart-items">
+              {selectedRecipes.map(item => (
+                <div key={item.id} className="cart-item">
+                  <div className="cart-item-image-wrapper">
+                    <Image
+                      alt={item.name}
+                      src={item.image_url}
+                      className="cart-item-image"
+                      fallback="https://picnew.90sheji.com/design/00/23/31/57/5a33e781a29d0.png?_upd=90sheji_linggan_13641061.png"
+                    />
+                  </div>
+                  <div className="cart-item-info">
+                    <div className="cart-item-name">{item.name}</div>
+                    <div className="cart-item-price">{`${item.price} ${item.price_type}`}</div>
+                  </div>
+                  <div className="cart-item-quantity">
+                    <Button
+                      size="small"
+                      onClick={() => updateCartQuantity(item.id, item.quantity - 1)}
+                    >
+                      -
+                    </Button>
+                    <span className="quantity-num">{item.quantity}</span>
+                    <Button
+                      size="small"
+                      onClick={() => updateCartQuantity(item.id, item.quantity + 1)}
+                    >
+                      +
+                    </Button>
+                  </div>
+                  <Button
+                    size="small"
+                    danger
+                    onClick={() => removeFromCart(item.id)}
+                  >
+                    <DeleteOutlined />
+                  </Button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </Modal>
+
       <footer className="bottom-nav">
         <div className="bottom-nav-item active" onClick={() => navigate('/')}>
           <HomeOutlined />
           <span>首页</span>
         </div>
+        <div className="bottom-nav-item" onClick={() => navigate('/orders')}>
+          <ShoppingCartOutlined />
+          <span>订单</span>
+        </div>
         <div className="bottom-nav-item" onClick={() => navigate('/profile')}>
           <UserOutlined />
-          <span>个人中心</span>
-        </div>
-        <div className="bottom-nav-item" onClick={logout}>
-          <ForkOutlined />
-          <span>退出</span>
+          <span>我的</span>
         </div>
       </footer>
     </Layout>
   )
+
+  return user.user_type === 'chef' ? renderChefHome() : renderFoodieHome()
 }
 
 export default Home

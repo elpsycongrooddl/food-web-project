@@ -5,6 +5,7 @@ import Login from './pages/Login'
 import Register from './pages/Register'
 import Home from './pages/Home'
 import Profile from './pages/Profile'
+import Orders from './pages/Orders'
 import './index.css'
 
 function App() {
@@ -64,6 +65,7 @@ function App() {
         <Route path="/register" element={user ? <Navigate to="/" /> : <Register />} />
         <Route path="/" element={user ? <Home user={user} /> : <Navigate to="/login" />} />
         <Route path="/profile" element={user ? <Profile user={user} /> : <Navigate to="/login" />} />
+        <Route path="/orders" element={user ? <Orders user={user} /> : <Navigate to="/login" />} />
       </Routes>
     </BrowserRouter>
   )
